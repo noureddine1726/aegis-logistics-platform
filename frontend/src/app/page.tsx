@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import type { ActiveConvoy } from "./AlgiersMap";
 
 const AlgiersMap = dynamic(() => import("./AlgiersMap"), {
   ssr: false,
   loading: () => (
-    <div className="h-[380px] w-full rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-400 text-sm">
+    <div className="h-[400px] w-full rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-400 text-sm">
       Loading Interactive Algiers Map...
     </div>
   ),
@@ -32,6 +33,8 @@ interface Resource {
 
 const CATEGORIES = ["ALL", "MEDICAL", "FOOD", "SHELTER", "FUEL", "RESCUE"];
 const LOW_STOCK_THRESHOLD = 30;
+// Algiers Central Logistics Hub (Dar El Beïda)
+const HUB_COORDS = { lat: 36.7131, lng: 3.2081 };
 
 export default function AegisDashboard() {
   const [resources, setResources] = useState<Resource[]>([]);
@@ -43,6 +46,9 @@ export default function AegisDashboard() {
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [selectedOrgFilter, setSelectedOrgFilter] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Live Truck / Convoy state
+  const [activeConvoy, setActiveConvoy] = useState<ActiveConvoy | null>(null);
 
   // Form states for Resource
   const [name, setName] = useState("");
@@ -92,6 +98,68 @@ export default function AegisDashboard() {
     void fetchData();
   }, []);
 
+  const handleUpdateQuantity = async (id: string, newQty: number) => {
+    if (newQty < 0) return;
+    await fetch(`${API_BASE}/inventory/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quantity: newQty }),
+    });
+    void fetchData();
+  };
+
+  // Animate active convoy truck across Algiers GPS coordinates
+  useEffect(() => {
+    if (!activeConvoy) return;
+
+    const timer = setInterval(() => {
+      setActiveConvoy((prev) => {
+        if (!prev) return null;
+        const nextProgress = prev.progress + 5;
+
+        if (nextProgress >= 100) {
+          clearInterval(timer);
+          // Automatically add +50 units in PostgreSQL upon arrival
+          const target = resources.find((r) => r.id === prev.targetId);
+          if (target) {
+            void handleUpdateQuantity(target.id, target.quantity + 50);
+          }
+          return null;
+        }
+
+        const ratio = nextProgress / 100;
+        const currentLat =
+          prev.startLat + (prev.endLat - prev.startLat) * ratio;
+        const currentLng =
+          prev.startLng + (prev.endLng - prev.startLng) * ratio;
+
+        return {
+          ...prev,
+          currentLat,
+          currentLng,
+          progress: nextProgress,
+        };
+      });
+    }, 350);
+
+    return () => clearInterval(timer);
+  }, [activeConvoy, resources]);
+
+  const handleDispatchTruck = (item: Resource) => {
+    if (activeConvoy) return;
+    setActiveConvoy({
+      targetId: item.id,
+      targetName: item.name,
+      startLat: HUB_COORDS.lat,
+      startLng: HUB_COORDS.lng,
+      endLat: item.lat,
+      endLng: item.lng,
+      currentLat: HUB_COORDS.lat,
+      currentLng: HUB_COORDS.lng,
+      progress: 0,
+    });
+  };
+
   const handleCreateOrganization = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orgName.trim()) return;
@@ -128,16 +196,6 @@ export default function AegisDashboard() {
     void fetchData();
   };
 
-  const handleUpdateQuantity = async (id: string, newQty: number) => {
-    if (newQty < 0) return;
-    await fetch(`${API_BASE}/inventory/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ quantity: newQty }),
-    });
-    void fetchData();
-  };
-
   const handleDeleteResource = async (id: string) => {
     await fetch(`${API_BASE}/inventory/${id}`, {
       method: "DELETE",
@@ -145,7 +203,6 @@ export default function AegisDashboard() {
     void fetchData();
   };
 
-  // Filtered resources for both Map and Inventory list
   const filteredResources = resources.filter((item) => {
     const matchesCategory =
       selectedCategory === "ALL" || item.type === selectedCategory;
@@ -175,7 +232,7 @@ export default function AegisDashboard() {
               </h1>
             </div>
             <p className="text-slate-400 text-sm mt-1">
-              Live Inventory & Emergency Logistics • Connected to NestJS + PostgreSQL (Port 3000)
+              Live Inventory & Emergency Fleet Logistics • Connected to NestJS + PostgreSQL (Port 3000)
             </p>
           </div>
           <button
@@ -192,7 +249,28 @@ export default function AegisDashboard() {
           </div>
         )}
 
-        {/* Stats Row (4 Cards including Critical Low Stock) */}
+        {/* Active GPS Truck Telemetry Banner */}
+        {activeConvoy && (
+          <div className="p-4 bg-emerald-950/60 border border-emerald-600/80 rounded-xl space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-semibold text-emerald-300">
+                🚚 LIVE GPS DISPATCH: Dar El Beïda Hub ➔ {activeConvoy.targetName}
+              </span>
+              <span className="font-mono text-xs text-emerald-400">
+                GPS: {activeConvoy.currentLat.toFixed(4)}° N,{" "}
+                {activeConvoy.currentLng.toFixed(4)}° E • {activeConvoy.progress}%
+              </span>
+            </div>
+            <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-emerald-500 transition-all duration-300"
+                style={{ width: `${activeConvoy.progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Stats Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-xl">
             <p className="text-xs uppercase tracking-wider text-slate-400">
@@ -438,7 +516,7 @@ export default function AegisDashboard() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-lg font-semibold text-white">
-                  Algiers Tactical Map (Blue = Normal, Red = Low Stock &lt;30)
+                  Algiers Tactical Map (Gold = Hub, Blue = Normal, Red = Low Stock)
                 </h2>
                 <span className="text-xs text-slate-400">
                   Selected: {lat.toFixed(4)}° N, {lng.toFixed(4)}° E
@@ -446,6 +524,7 @@ export default function AegisDashboard() {
               </div>
               <AlgiersMap
                 resources={filteredResources}
+                activeConvoy={activeConvoy}
                 onSelectCoords={(newLat, newLng) => {
                   setLat(newLat);
                   setLng(newLng);
@@ -472,6 +551,7 @@ export default function AegisDashboard() {
                 <div className="space-y-3">
                   {filteredResources.map((item) => {
                     const isLow = item.quantity < LOW_STOCK_THRESHOLD;
+                    const isTarget = activeConvoy?.targetId === item.id;
                     return (
                       <div
                         key={item.id}
@@ -491,6 +571,11 @@ export default function AegisDashboard() {
                                 ⚠ CRITICAL LOW STOCK
                               </span>
                             )}
+                            {isTarget && (
+                              <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                🚚 TRUCK INBOUND ({activeConvoy.progress}%)
+                              </span>
+                            )}
                             <h3 className="font-semibold text-white text-base">
                               {item.name}
                             </h3>
@@ -503,12 +588,16 @@ export default function AegisDashboard() {
                             • Coords: {item.lat.toFixed(4)},{" "}
                             {item.lng.toFixed(4)}
                           </p>
-                          <p className="text-[11px] text-slate-500 font-mono">
-                            UUID: {item.id}
-                          </p>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            onClick={() => handleDispatchTruck(item)}
+                            disabled={Boolean(activeConvoy)}
+                            className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white rounded text-xs font-semibold transition"
+                          >
+                            🚚 Dispatch (+50)
+                          </button>
                           <button
                             onClick={() =>
                               void handleUpdateQuantity(
@@ -521,7 +610,7 @@ export default function AegisDashboard() {
                             -10
                           </button>
                           <span
-                            className={`min-w-[60px] text-center font-bold text-lg ${
+                            className={`min-w-[50px] text-center font-bold text-lg ${
                               isLow ? "text-red-400" : "text-emerald-400"
                             }`}
                           >
@@ -540,7 +629,7 @@ export default function AegisDashboard() {
                           </button>
                           <button
                             onClick={() => void handleDeleteResource(item.id)}
-                            className="ml-2 px-3 py-1 bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/60 rounded text-xs font-medium"
+                            className="px-2.5 py-1 bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/60 rounded text-xs font-medium"
                           >
                             Delete
                           </button>
