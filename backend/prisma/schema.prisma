@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 1. Organization (e.g., NGO, Government)
+model Organization {
+  id        String     @id @default(uuid())
+  name      String
+  type      String     // "NGO", "GOVERNMENT"
+  users     User[]
+  resources Resource[]
+  createdAt DateTime   @default(now())
+}
+
+// 2. User (e.g., Dispatcher, Field Agent)
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  password       String       
+  role           String       // "ADMIN", "AGENT"
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+}
+
+// 3. Resource (e.g., Medical Kits, Water)
+model Resource {
+  id             String       @id @default(uuid())
+  name           String
+  quantity       Int
+  type           String       // "MEDICAL", "FOOD"
+  lat            Float        // GPS Latitude
+  lng            Float        // GPS Longitude
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  updatedAt      DateTime     @updatedAt
+}
